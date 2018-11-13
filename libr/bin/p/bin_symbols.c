@@ -90,29 +90,6 @@ static RList *parseSegments(RBuffer *buf, int off, int count) {
 	return sections;
 }
 
-#if 0
-static RList *parseOldSections(RBuffer *buf) {
-	RList *strings = parseStrings (bf->buf, 0x1c80, 15000);
-	ut8 b[0x2000] = { 0 };
-	(void)r_buf_read_at (buf, off, b, sizeof (b));
-	int x = off;
-	int X = 0;
-	int i;
-	RList *sections = r_list_newf (r_bin_section_free);
-	for (i = 0; i < count; i++) {
-		int A = r_read_le32 (b + X + 16);
-		int B = r_read_le32 (b + X + 16 + 8);
-		eprintf ("0x%08x  section  0x%08x 0x%08x  %s\n",
-			x, A, A + B, b + X);
-		r_list_append (sections, newSection (b + X, A, A + B));
-		x += 32;
-		X += 32;
-	}
-	eprintf ("\n");
-	return sections;
-}
-#endif
-
 static const char *typeString(int n) {
 	if (n == 12) { // CPU_SUBTYPE_ARM_V7) {
 		return "arm";
@@ -137,9 +114,9 @@ static SymbolsMetadata parseMetadata(RBuffer *buf, int off) {
 	sm.addr = off;
 	sm.cputype = r_read_le32 (b);
 	eprintf ("0x%08x  cputype  0x%x -> %s\n", 0x40, sm.cputype, typeString (sm.cputype));
-	bits = sm.bits = (strstr (typeString(sm.cputype), "64"))? 64: 32;
+	bits = sm.bits = (strstr (typeString (sm.cputype), "64"))? 64: 32;
 	sm.subtype = r_read_le32 (b + 4);
-	eprintf ("0x%08x  subtype  0x%x -> %s\n", 0x44, sm.subtype, subtypeString(sm.subtype));
+	eprintf ("0x%08x  subtype  0x%x -> %s\n", 0x44, sm.subtype, subtypeString (sm.subtype));
 	sm.n_sections = r_read_le32 (b + 8);
 	int count = r_read_le32 (b + 0x48);
 	sm.namelen = r_read_le32 (b + 0xc);
@@ -306,7 +283,7 @@ static RBinSymbol *newSymbol (RBinString *s) {
 	return sym;
 }
 
-#define is32 1
+#define is32 0
 #if is32
 //arm32
 #define STRINGS_BEGIN 0x1c80
