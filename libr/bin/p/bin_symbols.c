@@ -206,9 +206,6 @@ static RList *parseStrings(RBuffer *buf, int string_section, int string_section_
 			break;
 		}
 		bs->string = strdup (s);
-		if (i < 10) {
-			eprintf ("%d %s\n", i, s);
-		}
 // eprintf ("%s\n", s);
 		bs->vaddr = o + string_section;
 		bs->paddr = o + string_section;
@@ -309,10 +306,23 @@ static RBinSymbol *newSymbol (RBinString *s) {
 	return sym;
 }
 
+#define is32 1
+#if is32
+//arm32
+#define STRINGS_BEGIN 0x1c80
+#define STRINGS_SIZE 15000
+#define STRINGS_END STRINGS_BEGIN+15000
+#else
+//arm64
+#define STRINGS_BEGIN 0x0001eb58
+#define STRINGS_END 0x000610d8
+#define STRINGS_SIZE STRINGS_END-STRINGS_BEGIN
+#endif
+
 static void parseSections(RBuffer *b, int x) {
 	int i, x_end = 0x3a0;
-	ut32 buf[15000 - 0x1c80];
-	RList *strings = parseStrings (b, 0x1c80, 15000); // XXX hardcoded offset + size
+	ut32 buf[STRINGS_SIZE];
+	RList *strings = parseStrings (b, STRINGS_BEGIN, STRINGS_SIZE); // XXX hardcoded offset + size
 	RListIter *iter;
 	RBinString *s;
 	RList *list = r_list_newf (NULL);
@@ -350,20 +360,37 @@ eprintf ("x = 0x3a0 0x%x\n", x);
 		return;
 	}
 	r_buf_read_at (buf, x, b, count * 24);
-	const int array_section = x; // 0x000003a0;  //  XXX hardcoded offset
+	int array_section = x; // 0x000003a0;
 	int i;
-	const int array_section_end = array_section + (count * 24);  //  XXX hardcoded offset
-	for (i = 0; i < count; i++) {
-		int n = (i * 24);
-		const ut32 A = r_read_le32 (b + n); // offset in memory
-		const ut32 B = r_read_le32 (b + n + 4); // size of the symbol
-		const ut32 C = r_read_le32 (b + n + 8); // magic number 334e4051 3ce4102 34e4020 34e4000 ...
-		const ut32 D = r_read_le32 (b + n + 12);
-		const ut32 E = r_read_le32 (b + n + 16);
-		int d = D - E;
-		eprintf ("0x%08"PFMT64x" %3d addr=0x%x size=%4d magic=0x%x %d %d d=%d\n",
-			n + x, i, A, B, C, D, E, d);
-		x = n;
+	if (1) {
+		const int array_section_end = array_section + (count * 24);  //  XXX hardcoded offset
+		for (i = 0; i < count; i++) {
+			int n = (i * 24);
+			const ut32 A = r_read_le32 (b + n); // offset in memory
+			const ut32 B = r_read_le32 (b + n + 4); // size of the symbol
+			const ut32 C = r_read_le32 (b + n + 8); // magic number 334e4051 3ce4102 34e4020 34e4000 ...
+			const ut32 D = r_read_le32 (b + n + 12);
+			const ut32 E = r_read_le32 (b + n + 16);
+			int d = D - E;
+			eprintf ("0x%08"PFMT64x" %3d addr=0x%x size=%4d magic=0x%x %d %d d=%d\n",
+					n + x, i, A, B, C, D, E, d);
+			x = n;
+		}
+	} else {
+array_section -= 8;
+		const int array_section_end = array_section + (count * 32);  //  XXX hardcoded offset
+		for (i = 0; i < count; i++) {
+			int n = (i * 48);
+			const ut64 A = r_read_le64 (b + n); // offset in memory
+			const ut64 B = r_read_le64 (b + n + 8); // size of the symbol
+			const ut32 C = r_read_le32 (b + n + 16); // magic number 334e4051 3ce4102 34e4020 34e4000 ...
+			const ut32 D = r_read_le32 (b + n + 20);
+			const ut32 E = r_read_le32 (b + n + 24);
+			int d = D - E;
+			eprintf ("0x%08"PFMT64x" %3d addr=0x%08"PFMT64x" size=%4d magic=0x%x %d %d d=%d\n",
+					n + x, i, A, (int)B, C, D, E, d);
+			x = n;
+		}
 	}
 	free (b);
 }
@@ -468,18 +495,21 @@ Sections:
 
 	// 0x138 - 0x220        // unknown information + duplicated list of segments
 	SymbolsDragons sd = parseDragons (buf, x);
-
 	// 0x220 - 0x3a0        // table of sections
 	parseSections (buf, 0x220);
 
 	// 0x3a0 - 0x1648       // table of dwords with -1
-	parseSymbols (buf, 0x3a0);
+	if (bits == 32) {
+		parseSymbols (buf, 0x3a0);
+	} else {
+		parseSymbols (buf, 0x458);
+	}
 
 	// 0x1648 - 0x1c80      // table of dwords (unknown data)
 	// parseTable3 (buf, 0x1648);
 
 	// 0x1c80 - EOF         // strings
-	RList *strings = parseStrings (buf, 0x1c80, 15000); // XXX hardcoded offset + size
+	RList *strings = parseStrings (buf, STRINGS_BEGIN, STRINGS_SIZE); // XXX hardcoded offset + size
 	eprintf ("Count strings: %d\n", r_list_length (strings));
 	r_list_free (strings);
 
@@ -522,7 +552,7 @@ static RList *strings(RBinFile *bf) {
 	RListIter *iter;
 	RList *list = r_list_newf (NULL);
 	// XXX hardcoded offset + size
-	RList *strings = parseStrings (bf->buf, 0x1c80, 15000);
+	RList *strings = parseStrings (bf->buf, STRINGS_BEGIN, STRINGS_SIZE);
 	RBinString *s;
 	r_list_foreach (strings, iter, s) {
 		if (*s->string != '_') {
@@ -537,7 +567,7 @@ static RList *symbols(RBinFile *bf) {
 	RBinString *s;
 	RList *list = r_list_newf (NULL);
 	// XXX hardcoded offset + size
-	RList *strings = parseStrings (bf->buf, 0x1c80, 15000);
+	RList *strings = parseStrings (bf->buf, STRINGS_BEGIN, STRINGS_SIZE);
 	r_list_foreach (strings, iter, s) {
 		if (*s->string == '_') {
 			if (s->string[1] == '_' && s->string[2] == toupper(s->string[2])) {
