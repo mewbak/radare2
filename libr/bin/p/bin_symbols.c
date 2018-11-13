@@ -6,6 +6,8 @@
 #include <r_bin.h>
 #include "../i/private.h"
 
+static int bits = 32;
+
 typedef struct symbols_header_t {
 	ut32 magic;
 	ut32 version;
@@ -47,6 +49,7 @@ typedef struct symbols_metadata_t { // 0x40
 	ut32 size;
 	RList *sections;
 	ut32 addr;
+	int bits;
 } SymbolsMetadata;
 
 static RBinSection *newSection(const char *name, ut64 from, ut64 to) {
@@ -71,6 +74,9 @@ static RList *parseSegments(RBuffer *buf, int off, int count) {
 	int X = 0;
 	int i;
 	RList *sections = r_list_newf (r_bin_section_free);
+	if (!sections) {
+		return NULL;
+	}
 	for (i = 0; i < count; i++) {
 		int A = r_read_le32 (b + X + 16);
 		int B = r_read_le32 (b + X + 16 + 8);
@@ -126,21 +132,29 @@ static const char *subtypeString(int n) {
 
 static SymbolsMetadata parseMetadata(RBuffer *buf, int off) {
 	SymbolsMetadata sm = { 0 };
-	ut8 b[0x2000] = { 0 };
+	ut8 b[0x100] = { 0 };
 	(void)r_buf_read_at (buf, off, b, sizeof (b));
 	sm.addr = off;
 	sm.cputype = r_read_le32 (b);
 	eprintf ("0x%08x  cputype  0x%x -> %s\n", 0x40, sm.cputype, typeString (sm.cputype));
+	bits = sm.bits = (strstr (typeString(sm.cputype), "64"))? 64: 32;
 	sm.subtype = r_read_le32 (b + 4);
 	eprintf ("0x%08x  subtype  0x%x -> %s\n", 0x44, sm.subtype, subtypeString(sm.subtype));
-	sm.n_sections = r_read_le32 (b + 0x8);
+	sm.n_sections = r_read_le32 (b + 8);
 	int count = r_read_le32 (b + 0x48);
 	sm.namelen = r_read_le32 (b + 0xc);
 	eprintf ("0x%08x  strlen   %d\n", 0x4c, sm.namelen);
-	eprintf ("0x%08x  filename %s\n", 0x50, b + 0x10);
+	eprintf ("0x%08x  filename %s\n", 0x50, b + 16);
+	int delta = 16;
+	if (bits==64) {
+		// delta = 0;
+	}
 	sm.sections = parseSegments (buf,
-		off + sm.namelen + 0x10, sm.n_sections);
+		off + sm.namelen + delta, sm.n_sections);
 	sm.size = (sm.n_sections * 32) + 120;
+	if (bits == 64) {
+		sm.size -= 8;
+	}
 	return sm;
 }
 
@@ -261,8 +275,12 @@ static SymbolsDragons parseDragons(RBuffer *buf, int off) {
 
 	sd.n_sections = r_read_le32 (b + 24); // x + 0x20); // 0xc7;
 	// TODO: reuse the parseSegments code here. parseSegments (buf, 0x224);
-	eprintf ("\nDragon sections:\n");
-	parseSegments (buf, 0x1b0, sd.n_sections);
+	eprintf ("\nDragon sections %d:\n", sd.n_sections);
+	int address = 0x1b0;
+	if (bits == 64) {
+		address -= 8;
+	}
+	parseSegments (buf, address, sd.n_sections);
 #if 0
 	const int rray_section = 0x1ab0; // 0x00000224; //  XXX hardcoded offset
 	const int rray_section_end = rray_section + (count * 12); //  XXX hardcoded offset
@@ -326,8 +344,11 @@ eprintf ("x = 0x3a0 0x%x\n", x);
 // 0x1648 - 0x3a0
 	ut32 count = r_read_le32 (&countbuf);
 	count = (0x1648 - x) / 24;
-	eprintf ("table2 count %d\n", count);
+	eprintf ("symbols table2 count %d\n", count);
 	ut8 *b = calloc (24, count);
+	if (!b) {
+		return;
+	}
 	r_buf_read_at (buf, x, b, count * 24);
 	const int array_section = x; // 0x000003a0;  //  XXX hardcoded offset
 	int i;
@@ -340,7 +361,7 @@ eprintf ("x = 0x3a0 0x%x\n", x);
 		const ut32 D = r_read_le32 (b + n + 12);
 		const ut32 E = r_read_le32 (b + n + 16);
 		int d = D - E;
-		eprintf ("0x%08"PFMT64x" %3d 0x%x %4d 0x%x %d %d d=%d\n",
+		eprintf ("0x%08"PFMT64x" %3d addr=0x%x size=%4d magic=0x%x %d %d d=%d\n",
 			n + x, i, A, B, C, D, E, d);
 		x = n;
 	}
@@ -444,10 +465,6 @@ Sections:
 
 	// printf ("0x%x vs 0x138\n", 0x40 + sm.size);
 	int x = sm.addr + sm.size;
-	if (x != 0x138) {
-		eprintf ("OFFSET IS NOT VALID\n");
-		return NULL;
-	}
 
 	// 0x138 - 0x220        // unknown information + duplicated list of segments
 	SymbolsDragons sd = parseDragons (buf, x);
